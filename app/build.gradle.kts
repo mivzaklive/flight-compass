@@ -32,4 +32,10 @@ android {
 }
 
 // בלי ספריות חיצוניות: רק Android ו-Kotlin
-dependencies {}
+dependencies {
+    // רק לבדיקות על מחשב (org.json האמיתי במקום הגרסה הריקה של android.jar)
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}
+
+android.testOptions.unitTests.isReturnDefaultValues = true

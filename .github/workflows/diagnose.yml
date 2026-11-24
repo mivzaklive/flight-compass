@@ -1,0 +1,35 @@
+name: Diagnose
+on:
+  workflow_dispatch:
+jobs:
+  diag:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Python skill (reference)
+        continue-on-error: true
+        run: |
+          git clone --depth 1 https://github.com/Brain-ai-biz/cheap-flights /tmp/cf
+          cd /tmp && python3 -I -c "
+          import sys;sys.path.insert(0,'/tmp/cf/scripts')
+          import gflights as g, json, urllib.parse
+          from datetime import date,timedelta
+          s=date.today()+timedelta(days=1)
+          inner=[None,g._filters('TLV','ATH',s.isoformat(),(s+timedelta(days=4)).isoformat(),1,0),[s.isoformat(),(s+timedelta(days=60)).isoformat()],None,[4,4]]
+          print('PYBODY', json.dumps([None, json.dumps(inner, separators=(',', ':'))], separators=(',', ':')))
+          try:
+            r=g.calendar_chunk('TLV','ATH',s,s+timedelta(days=60),4)
+            print('PYRESULT', len(r), r[:3])
+          except Exception as e:
+            print('PYRESULT exception', repr(e))
+          "
+      - name: Kotlin app code (live)
+        env:
+          LIVE: "1"
+        run: |
+          chmod +x gradlew
+          ./gradlew --no-daemon testDebugUnitTest --tests '*LiveTest*' -i 2>&1 | grep -E "TRACE|RESULT|FAILED|BUILD" || true

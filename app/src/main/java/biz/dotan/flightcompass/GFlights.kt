@@ -28,6 +28,9 @@ object GFlights {
     /** הפסקה בין בקשות במילישניות. בסריקת יעדים אקראיים מאטים ל-3 שניות. */
     @Volatile var pauseMs = 1500L
     @Volatile var cancelled = false
+    /** יומן מפורט (לאבחון): כל בקשה, קוד התגובה ומה חזר. */
+    @Volatile var trace: ((String) -> Unit)? = null
+    private var reqNo = 0
     private var last = 0L
 
     // מטמון לאותו יום: אותה סריקה לא נשלחת שוב
@@ -60,11 +63,14 @@ object GFlights {
         var text: String? = null
         var attempt = 0
         while (text == null) {
+            reqNo++
+            trace?.invoke("בקשה $reqNo ל-Google Flights…")
             try {
                 text = send("$BASE$endpoint?curr=$currency&hl=en", body)
             } catch (e: Blocked) {
                 throw e
             } catch (e: java.io.IOException) {
+                trace?.invoke("בקשה $reqNo נכשלה: ${e.javaClass.simpleName} ${e.message ?: ""}")
                 if (attempt >= 2) throw e
                 attempt++
                 sleepChecked(2000L * attempt)
@@ -79,19 +85,26 @@ object GFlights {
         try {
             c.requestMethod = "POST"
             c.instanceFollowRedirects = false
-            c.connectTimeout = 40000
-            c.readTimeout = 40000
+            c.connectTimeout = 15000
+            c.readTimeout = 30000
             c.doOutput = true
             c.setRequestProperty("content-type", "application/x-www-form-urlencoded;charset=UTF-8")
             c.setRequestProperty("user-agent", UA)
+            c.setRequestProperty("accept-language", "en-US,en;q=0.9")
+            c.setRequestProperty("origin", "https://www.google.com")
+            c.setRequestProperty("referer", "https://www.google.com/travel/flights")
+            // אישור עוגיות מראש, כדי שגוגל לא יפנה לדף ההסכמה
+            c.setRequestProperty("cookie", "CONSENT=YES+; SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg")
             c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val code = c.responseCode
             val loc = c.getHeaderField("location") ?: ""
             if (code == 429 || (code in 300..399 && loc.contains("sorry"))) {
                 throw Blocked("גוגל ביקש הפסקה")
             }
-            if (code !in 200..299) throw java.io.IOException("HTTP $code")
-            return c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            if (code !in 200..299) throw java.io.IOException("HTTP $code ${loc.take(80)}")
+            val t = c.inputStream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            trace?.invoke("תשובה: HTTP $code, ${t.length} תווים")
+            return t
         } finally {
             c.disconnect()
         }
@@ -109,6 +122,7 @@ object GFlights {
                 if (item.length() == 0 || item.optString(0) != "wrb.fr") continue
                 if (item.isNull(2)) {
                     val code = item.optJSONArray(5)
+                    trace?.invoke("גוגל החזיר שגיאה: ${item.toString().take(200)}")
                     if (code != null && code.optInt(0) in listOf(13, 7, 8)) {
                         throw Blocked("גוגל החזיר קוד ${code.optInt(0)}")
                     }
@@ -117,6 +131,7 @@ object GFlights {
                 return JSONArray(item.getString(2))
             }
         }
+        trace?.invoke("התשובה לא בפורמט הצפוי: ${raw.take(160).replace("\n", " ")}")
         return null
     }
 

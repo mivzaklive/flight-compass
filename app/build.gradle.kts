@@ -11,15 +11,29 @@ android {
         applicationId = "biz.dotan.flightcompass"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        // מספר גרסה עולה אוטומטית בכל בנייה ב-GitHub
+        val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
+        versionCode = 100 + run
+        versionName = "1.$run"
+    }
+
+    // מפתח קבוע לשימוש אישי (לא ל-Google Play), כדי שכל עדכון יותקן מעל הגרסה הקודמת
+    signingConfigs {
+        create("personal") {
+            storeFile = rootProject.file("signing/flightcompass.jks")
+            storePassword = "flightcompass"
+            keyAlias = "flightcompass"
+            keyPassword = "flightcompass"
+        }
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            // חתימה בדיבאג כדי שאפשר יהיה להתקין ישר על הטלפון לשימוש אישי
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("personal")
+        }
+        debug {
+            signingConfig = signingConfigs.getByName("personal")
         }
     }
     compileOptions {

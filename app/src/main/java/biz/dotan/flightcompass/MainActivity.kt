@@ -101,6 +101,7 @@ class MainActivity : Activity() {
         root.addView(status)
         results = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         root.addView(results)
+        GFlights.trace = { log(it) }
     }
 
     // ================= פעולות =================
@@ -295,7 +296,7 @@ class MainActivity : Activity() {
     private fun log(line: String) {
         runOnUiThread {
             logLines.addLast(line)
-            while (logLines.size > 6) logLines.removeFirst()
+            while (logLines.size > 8) logLines.removeFirst()
             status.text = logLines.joinToString("\n")
         }
     }

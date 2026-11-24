@@ -56,8 +56,50 @@ object GFlights {
         }
     }
 
+    private var warmed = false
+
+    /** כמו דפדפן: קודם פותחים את דף Google Flights כדי לקבל עוגיות, ורק אז שולחים בקשות. */
+    private fun warmUp() {
+        if (warmed) return
+        if (java.net.CookieHandler.getDefault() == null) {
+            java.net.CookieHandler.setDefault(java.net.CookieManager(null, java.net.CookiePolicy.ACCEPT_ALL))
+        }
+        try {
+            val c = URL("https://www.google.com/travel/flights?hl=en").openConnection() as HttpURLConnection
+            c.connectTimeout = 15000; c.readTimeout = 30000
+            c.setRequestProperty("user-agent", UA)
+            c.setRequestProperty("accept-language", "en-US,en;q=0.9")
+            val code = c.responseCode
+            c.inputStream.use { it.readBytes() }
+            c.disconnect()
+            trace?.invoke("חיבור ראשוני לגוגל: HTTP $code")
+        } catch (e: Exception) {
+            trace?.invoke("חיבור ראשוני נכשל: ${e.javaClass.simpleName}")
+        }
+        warmed = true
+    }
+
+    /** קוד 13 מגוגל לפעמים אקראי: מנסים שוב כמה פעמים בהפסקות קצרות לפני שמוותרים. */
     private fun post(endpoint: String, inner: JSONArray, currency: String): JSONArray? {
+        var n = 0
+        while (true) {
+            try {
+                return postOnce(endpoint, inner, currency)
+            } catch (e: Blocked) {
+                if (e.message?.contains("13") != true || n >= retries13) throw e
+                n++
+                trace?.invoke("גוגל החזיר שגיאה זמנית, מנסה שוב ($n/$retries13)…")
+                sleepChecked(3000L * n)
+            }
+        }
+    }
+
+    /** כמה פעמים לנסות שוב על קוד 13 (בסוף הטווח מקטינים, כי שם 13 = אין עוד תאריכים). */
+    @Volatile var retries13 = 3
+
+    private fun postOnce(endpoint: String, inner: JSONArray, currency: String): JSONArray? {
         if (cancelled) throw Cancelled()
+        warmUp()
         val freq = arr(null, inner.toString()).toString()
         val body = "f.req=" + URLEncoder.encode(freq, "UTF-8")
         if (traceBody) trace?.invoke("BODY $freq")
@@ -98,7 +140,6 @@ object GFlights {
             c.setRequestProperty("origin", "https://www.google.com")
             c.setRequestProperty("referer", "https://www.google.com/travel/flights")
             // אישור עוגיות מראש, כדי שגוגל לא יפנה לדף ההסכמה
-            c.setRequestProperty("cookie", "CONSENT=YES+; SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg")
             }
             c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val code = c.responseCode
@@ -194,6 +235,7 @@ object GFlights {
             cache[key]?.let { got = it.first; end = it.second }
             while (got == null) {
                 try {
+                    retries13 = if (cur.isAfter(late)) 0 else 3
                     val g = calendarChunk(o, d, cur, end, nights, adults, stops)
                     if (g.isEmpty() && cur.isAfter(start) && end.minusDays(6).isAfter(cur) && tries < 4) {
                         tries++; end = end.minusDays(7)

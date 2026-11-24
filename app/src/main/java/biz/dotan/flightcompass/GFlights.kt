@@ -36,6 +36,12 @@ object GFlights {
     @Volatile var useWarmUp = true
     @Volatile var pythonLike = false   // כותרות בדיוק כמו בסקיל בפייתון
     @Volatile var hl = "en"
+
+    /**
+     * דרך שליחה חלופית: בקשה מתוך דפדפן אמיתי (WebView) שפתוח על Google Flights.
+     * מחזירה (קוד HTTP, טקסט). כשהיא מוגדרת, האפליקציה לא שולחת בקשות ישירות.
+     */
+    @Volatile var transport: ((url: String, body: String) -> Pair<Int, String>)? = null
     private var last = 0L
 
     // מטמון לאותו יום: אותה סריקה לא נשלחת שוב
@@ -102,7 +108,7 @@ object GFlights {
 
     private fun postOnce(endpoint: String, inner: JSONArray, currency: String): JSONArray? {
         if (cancelled) throw Cancelled()
-        if (useWarmUp) warmUp()
+        if (useWarmUp && transport == null) warmUp()
         val freq = arr(null, inner.toString()).toString()
         val body = "f.req=" + URLEncoder.encode(freq, "UTF-8")
         if (traceBody) trace?.invoke("BODY $freq")
@@ -129,6 +135,13 @@ object GFlights {
     }
 
     private fun send(url: String, body: String): String {
+        transport?.let { tr ->
+            val (code, t) = tr(url, body)
+            if (code == 429) throw Blocked("גוגל ביקש הפסקה")
+            if (code !in 200..299) throw java.io.IOException("HTTP $code")
+            trace?.invoke("תשובה (דפדפן): HTTP $code, ${t.length} תווים")
+            return t
+        }
         val c = URL(url).openConnection() as HttpURLConnection
         try {
             c.requestMethod = "POST"
@@ -227,7 +240,8 @@ object GFlights {
      * גוגל מוכר כ-330 יום קדימה; בחלקים המאוחרים שגיאה = סוף הטווח, מקצרים ומנסים שוב.
      */
     fun calendarYear(o: String, d: String, nights: Int, adults: Int, stops: Int,
-                     log: (String) -> Unit): List<Row> {
+                     log: (String) -> Unit,
+                     progress: (done: Int, total: Int) -> Unit = { _, _ -> }): List<Row> {
         val today = LocalDate.now()
         val start = today.plusDays(1)
         val final = minD(today.plusDays(365), today.plusDays(329L - nights))
@@ -235,6 +249,9 @@ object GFlights {
         val rows = ArrayList<Row>()
         var cur = start
         var waited = false
+        val total = ((java.time.temporal.ChronoUnit.DAYS.between(start, final) + MAX_CHUNK) / MAX_CHUNK).toInt()
+        var done = 0
+        progress(0, total)
         while (!cur.isAfter(final)) {
             var end = minD(cur.plusDays(MAX_CHUNK - 1), final)
             val key = "$o-$d-$nights-$adults-$stops-$cur-$today"
@@ -268,19 +285,23 @@ object GFlights {
             if (g.isNotEmpty() || !cur.isAfter(late)) cache[key] = Pair(g, end)
             rows.addAll(g)
             log("${Places.name(d)} · $nights לילות: ${fmt(cur)}–${fmt(end)} · ${g.size} תאריכים")
+            done++
+            progress(minOf(done, total), total)
             if (g.isEmpty() && cur.isAfter(start)) break
             cur = end.plusDays(1)
         }
+        progress(total, total)
         return rows
     }
 
     /** בדיקת חיבור: אותה בקשה בכמה דרכים, כדי לגלות מה גוגל מקבל מהמכשיר הזה. */
-    fun diagnose(out: (String) -> Unit) {
+    fun diagnose(browser: ((String, String) -> Pair<Int, String>)?, out: (String) -> Unit) {
         val tz = java.util.TimeZone.getDefault().id
         out("מכשיר: Android ${android.os.Build.VERSION.RELEASE} (${android.os.Build.MODEL}) · שפה ${java.util.Locale.getDefault()} · אזור זמן $tz · היום ${LocalDate.now()}")
         val s = LocalDate.now().plusDays(1)
         data class V(val name: String, val warm: Boolean, val extra: Boolean, val py: Boolean, val hl: String, val cur: String, val days: Long)
         val variants = listOf(
+            V("W דפדפן מובנה", false, false, false, "en", "ILS", 60),
             V("A רגיל", true, true, false, "en", "ILS", 60),
             V("B כמו פייתון", false, false, true, "en", "ILS", 60),
             V("C בלי עוגיות", false, true, false, "en", "ILS", 60),
@@ -292,12 +313,15 @@ object GFlights {
         val oldHl = hl
         val oldTrace = trace
         val oldPause = pauseMs
+        val oldTransport = transport
         traceBody = true
         pauseMs = 2500
         try {
             for (v in variants) {
                 useWarmUp = v.warm; extraHeaders = v.extra; pythonLike = v.py; hl = v.hl
-                if (!v.warm) java.net.CookieHandler.setDefault(null).also { warmed = false }
+                transport = if (v.name.startsWith("W")) browser else null
+                if (v.name.startsWith("W") && browser == null) continue
+                if (!v.warm && !v.name.startsWith("W")) java.net.CookieHandler.setDefault(null).also { warmed = false }
                 val lines = ArrayList<String>()
                 trace = { lines.add(it) }
                 retries13 = 0
@@ -311,11 +335,12 @@ object GFlights {
                 }
                 out("${v.name}: $r")
                 if (!r.startsWith("✅")) lines.filter { !it.startsWith("BODY") && !it.startsWith("בקשה") }.forEach { out("   ${it.take(300)}") }
-                if (v.name.startsWith("A")) lines.firstOrNull { it.startsWith("BODY") }?.let { out("   ${it.take(700)}") }
+                if (v.name.startsWith("W")) lines.firstOrNull { it.startsWith("BODY") }?.let { out("   ${it.take(700)}") }
             }
         } finally {
             useWarmUp = old[0]; extraHeaders = old[1]; pythonLike = old[2]; hl = oldHl
             trace = oldTrace; traceBody = false; pauseMs = oldPause; retries13 = 3
+            transport = oldTransport
         }
     }
 

@@ -15,6 +15,7 @@ android {
         val run = (System.getenv("GITHUB_RUN_NUMBER") ?: "0").toInt()
         versionCode = 100 + run
         versionName = "1.$run"
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     // מפתח קבוע לשימוש אישי (לא ל-Google Play), כדי שכל עדכון יותקן מעל הגרסה הקודמת
@@ -50,6 +51,8 @@ dependencies {
     // רק לבדיקות על מחשב (org.json האמיתי במקום הגרסה הריקה של android.jar)
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20240303")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
 
 android.testOptions.unitTests.isReturnDefaultValues = true

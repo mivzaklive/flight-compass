@@ -40,6 +40,8 @@ class MainActivity : Activity() {
     private lateinit var randomBtn: Button
     private lateinit var stopBtn: Button
     private lateinit var status: TextView
+    private lateinit var diagBtn: Button
+    private lateinit var diagOut: TextView
     private lateinit var results: LinearLayout
     private lateinit var scroll: ScrollView
 
@@ -96,6 +98,18 @@ class MainActivity : Activity() {
             log("עוצר…")
         }
         stopBtn.isEnabled = false
+
+        val diag = card(root)
+        diag.addView(text("🔧 בדיקת חיבור", 17f, true, ink))
+        diag.addView(text("שולח את אותה בקשה בכמה דרכים ומראה מה גוגל מקבל מהטלפון שלך. לוקח כחצי דקה.", 13f, false, muted))
+        diagBtn = button(diag, "הרץ בדיקת חיבור") { startDiagnose() }
+        diagOut = text("", 12f, false, ink).apply { setTextIsSelectable(true) }
+        diag.addView(diagOut)
+        button(diag, "העתק את התוצאה") {
+            val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            cm.setPrimaryClip(android.content.ClipData.newPlainText("diag", diagOut.text))
+            log("התוצאה הועתקה. אפשר להדביק אותה בצ'אט.")
+        }
 
         status = text("", 13f, false, muted)
         root.addView(status)
@@ -168,6 +182,15 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun startDiagnose() {
+        if (busy) return
+        diagOut.text = ""
+        runWork {
+            GFlights.diagnose { line -> runOnUiThread { diagOut.append(line + "\n") } }
+            log("בדיקת החיבור הסתיימה. לחץ \"העתק את התוצאה\" ושלח לי.")
+        }
+    }
+
     private fun runWork(job: () -> Unit) {
         busy = true
         GFlights.cancelled = false
@@ -193,6 +216,7 @@ class MainActivity : Activity() {
     private fun setBusy(b: Boolean) {
         scanBtn.isEnabled = !b
         randomBtn.isEnabled = !b
+        diagBtn.isEnabled = !b
         stopBtn.isEnabled = b
     }
 

@@ -33,6 +33,9 @@ object GFlights {
     private var reqNo = 0
     @Volatile var traceBody = false
     @Volatile var extraHeaders = true
+    @Volatile var useWarmUp = true
+    @Volatile var pythonLike = false   // כותרות בדיוק כמו בסקיל בפייתון
+    @Volatile var hl = "en"
     private var last = 0L
 
     // מטמון לאותו יום: אותה סריקה לא נשלחת שוב
@@ -99,7 +102,7 @@ object GFlights {
 
     private fun postOnce(endpoint: String, inner: JSONArray, currency: String): JSONArray? {
         if (cancelled) throw Cancelled()
-        warmUp()
+        if (useWarmUp) warmUp()
         val freq = arr(null, inner.toString()).toString()
         val body = "f.req=" + URLEncoder.encode(freq, "UTF-8")
         if (traceBody) trace?.invoke("BODY $freq")
@@ -111,7 +114,7 @@ object GFlights {
             reqNo++
             trace?.invoke("בקשה $reqNo ל-Google Flights…")
             try {
-                text = send("$BASE$endpoint?curr=$currency&hl=en", body)
+                text = send("$BASE$endpoint?curr=$currency&hl=$hl", body)
             } catch (e: Blocked) {
                 throw e
             } catch (e: java.io.IOException) {
@@ -135,6 +138,11 @@ object GFlights {
             c.doOutput = true
             c.setRequestProperty("content-type", "application/x-www-form-urlencoded;charset=UTF-8")
             c.setRequestProperty("user-agent", UA)
+            if (pythonLike) {
+                c.setRequestProperty("accept-encoding", "identity")
+                c.setRequestProperty("connection", "close")
+                c.setRequestProperty("accept", "*/*")
+            }
             if (extraHeaders) {
             c.setRequestProperty("accept-language", "en-US,en;q=0.9")
             c.setRequestProperty("origin", "https://www.google.com")
@@ -264,6 +272,51 @@ object GFlights {
             cur = end.plusDays(1)
         }
         return rows
+    }
+
+    /** בדיקת חיבור: אותה בקשה בכמה דרכים, כדי לגלות מה גוגל מקבל מהמכשיר הזה. */
+    fun diagnose(out: (String) -> Unit) {
+        val tz = java.util.TimeZone.getDefault().id
+        out("מכשיר: Android ${android.os.Build.VERSION.RELEASE} (${android.os.Build.MODEL}) · שפה ${java.util.Locale.getDefault()} · אזור זמן $tz · היום ${LocalDate.now()}")
+        val s = LocalDate.now().plusDays(1)
+        data class V(val name: String, val warm: Boolean, val extra: Boolean, val py: Boolean, val hl: String, val cur: String, val days: Long)
+        val variants = listOf(
+            V("A רגיל", true, true, false, "en", "ILS", 60),
+            V("B כמו פייתון", false, false, true, "en", "ILS", 60),
+            V("C בלי עוגיות", false, true, false, "en", "ILS", 60),
+            V("D דולר", true, true, false, "en", "USD", 60),
+            V("E עברית", true, true, false, "he", "ILS", 60),
+            V("F טווח קצר", true, true, false, "en", "ILS", 20),
+        )
+        val old = arrayOf(useWarmUp, extraHeaders, pythonLike)
+        val oldHl = hl
+        val oldTrace = trace
+        val oldPause = pauseMs
+        traceBody = true
+        pauseMs = 2500
+        try {
+            for (v in variants) {
+                useWarmUp = v.warm; extraHeaders = v.extra; pythonLike = v.py; hl = v.hl
+                if (!v.warm) java.net.CookieHandler.setDefault(null).also { warmed = false }
+                val lines = ArrayList<String>()
+                trace = { lines.add(it) }
+                retries13 = 0
+                val r = try {
+                    val rows = calendarChunk("TLV", "ATH", s, s.plusDays(v.days), 4, 1, 0, v.cur)
+                    if (rows.isEmpty()) "ריק (0 תאריכים)" else "✅ עובד: ${rows.size} תאריכים, הזול ${rows.minOf { it.price }.toInt()} ${v.cur}"
+                } catch (e: Cancelled) {
+                    throw e
+                } catch (e: Exception) {
+                    "❌ ${e.javaClass.simpleName}: ${e.message}"
+                }
+                out("${v.name}: $r")
+                if (!r.startsWith("✅")) lines.filter { !it.startsWith("BODY") && !it.startsWith("בקשה") }.forEach { out("   ${it.take(300)}") }
+                if (v.name.startsWith("A")) lines.firstOrNull { it.startsWith("BODY") }?.let { out("   ${it.take(700)}") }
+            }
+        } finally {
+            useWarmUp = old[0]; extraHeaders = old[1]; pythonLike = old[2]; hl = oldHl
+            trace = oldTrace; traceBody = false; pauseMs = oldPause; retries13 = 3
+        }
     }
 
     private fun minD(a: LocalDate, b: LocalDate): LocalDate = if (a.isBefore(b)) a else b

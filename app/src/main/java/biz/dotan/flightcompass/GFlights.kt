@@ -31,6 +31,8 @@ object GFlights {
     /** יומן מפורט (לאבחון): כל בקשה, קוד התגובה ומה חזר. */
     @Volatile var trace: ((String) -> Unit)? = null
     private var reqNo = 0
+    @Volatile var traceBody = false
+    @Volatile var extraHeaders = true
     private var last = 0L
 
     // מטמון לאותו יום: אותה סריקה לא נשלחת שוב
@@ -58,6 +60,7 @@ object GFlights {
         if (cancelled) throw Cancelled()
         val freq = arr(null, inner.toString()).toString()
         val body = "f.req=" + URLEncoder.encode(freq, "UTF-8")
+        if (traceBody) trace?.invoke("BODY $freq")
         val wait = pauseMs - (System.currentTimeMillis() - last)
         if (wait > 0) sleepChecked(wait)
         var text: String? = null
@@ -90,11 +93,13 @@ object GFlights {
             c.doOutput = true
             c.setRequestProperty("content-type", "application/x-www-form-urlencoded;charset=UTF-8")
             c.setRequestProperty("user-agent", UA)
+            if (extraHeaders) {
             c.setRequestProperty("accept-language", "en-US,en;q=0.9")
             c.setRequestProperty("origin", "https://www.google.com")
             c.setRequestProperty("referer", "https://www.google.com/travel/flights")
             // אישור עוגיות מראש, כדי שגוגל לא יפנה לדף ההסכמה
             c.setRequestProperty("cookie", "CONSENT=YES+; SOCS=CAESEwgDEgk0ODE3Nzk3MjQaAmVuIAEaBgiA_LyaBg")
+            }
             c.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
             val code = c.responseCode
             val loc = c.getHeaderField("location") ?: ""

@@ -98,13 +98,13 @@ object GFlights {
                 if (e.message?.contains("13") != true || n >= retries13) throw e
                 n++
                 trace?.invoke("גוגל החזיר שגיאה זמנית, מנסה שוב ($n/$retries13)…")
-                sleepChecked(3000L * n)
+                sleepChecked(1500L + 1000L * n)
             }
         }
     }
 
     /** כמה פעמים לנסות שוב על קוד 13 (בסוף הטווח מקטינים, כי שם 13 = אין עוד תאריכים). */
-    @Volatile var retries13 = 3
+    @Volatile var retries13 = 5
 
     private fun postOnce(endpoint: String, inner: JSONArray, currency: String): JSONArray? {
         if (cancelled) throw Cancelled()
@@ -260,7 +260,7 @@ object GFlights {
             cache[key]?.let { got = it.first; end = it.second }
             while (got == null) {
                 try {
-                    retries13 = if (cur.isAfter(late)) 0 else 3
+                    retries13 = if (cur.isAfter(late)) 0 else 5
                     val g = calendarChunk(o, d, cur, end, nights, adults, stops)
                     if (g.isEmpty() && cur.isAfter(start) && end.minusDays(6).isAfter(cur) && tries < 4) {
                         tries++; end = end.minusDays(7)
@@ -339,7 +339,7 @@ object GFlights {
             }
         } finally {
             useWarmUp = old[0]; extraHeaders = old[1]; pythonLike = old[2]; hl = oldHl
-            trace = oldTrace; traceBody = false; pauseMs = oldPause; retries13 = 3
+            trace = oldTrace; traceBody = false; pauseMs = oldPause; retries13 = 5
             transport = oldTransport
         }
     }
